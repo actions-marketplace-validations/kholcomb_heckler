@@ -34,7 +34,7 @@ runs:
   using: 'composite'
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
       with:
         python-version: '3.x'
 
@@ -44,30 +44,36 @@ runs:
 
     - name: Run scan
       shell: bash
-      id: scan
+      env:
+        INPUT_SEVERITY: ${{ inputs.severity }}
+        INPUT_SCAN_DEPS: ${{ inputs.scan-deps }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_PATH: ${{ inputs.path }}
       run: |
-        ARGS="--ci --severity ${{ inputs.severity }}"
+        ARGS="--ci --severity $INPUT_SEVERITY"
 
-        if [ "${{ inputs.scan-deps }}" = "true" ]; then
+        if [ "$INPUT_SCAN_DEPS" = "true" ]; then
           ARGS="$ARGS --scan-deps"
         fi
 
-        if [ -n "${{ inputs.config }}" ]; then
-          ARGS="$ARGS --config ${{ inputs.config }}"
+        if [ -n "$INPUT_CONFIG" ]; then
+          ARGS="$ARGS --config $INPUT_CONFIG"
         fi
 
-        if [ "${{ inputs.upload-sarif }}" = "true" ]; then
-          heckler $ARGS --format sarif ${{ inputs.path }} > heckler-results.sarif || true
-          heckler $ARGS ${{ inputs.path }}
-        elif [ "${{ inputs.format }}" = "sarif" ]; then
-          heckler $ARGS --format sarif ${{ inputs.path }}
+        if [ "$INPUT_UPLOAD_SARIF" = "true" ]; then
+          heckler $ARGS --format sarif "$INPUT_PATH" > heckler-results.sarif || true
+          heckler $ARGS "$INPUT_PATH"
+        elif [ "$INPUT_FORMAT" = "sarif" ]; then
+          heckler $ARGS --format sarif "$INPUT_PATH"
         else
-          heckler $ARGS --format ${{ inputs.format }} ${{ inputs.path }}
+          heckler $ARGS --format "$INPUT_FORMAT" "$INPUT_PATH"
         fi
 
     - name: Upload SARIF
       if: inputs.upload-sarif == 'true' && always()
-      uses: github/codeql-action/upload-sarif@v4
+      uses: github/codeql-action/upload-sarif@cb06a0a8527b2c6970741b3a0baa15231dc74a4c  # v4
       with:
         sarif_file: heckler-results.sarif
         category: heckler

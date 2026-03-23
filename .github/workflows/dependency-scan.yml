@@ -38,9 +38,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: '3.x'
 
@@ -55,7 +55,7 @@ jobs:
 
       - name: Restore scan cache
         id: cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5
         with:
           path: .heckler-dep-scan-result
           key: heckler-deps-${{ steps.lock-hash.outputs.hash }}
@@ -86,10 +86,15 @@ jobs:
           heckler --ci --scan-deps --format json . > .heckler-dep-scan-result
           EXIT_CODE=$?
           echo "scan_exit_code=${EXIT_CODE}" >> "$GITHUB_ENV"
+          # Exit code 2+ indicates a tool error (not findings) — fail fast
+          if [ "$EXIT_CODE" -ge 2 ]; then
+            echo "Error: heckler exited with code $EXIT_CODE" >&2
+            exit "$EXIT_CODE"
+          fi
 
       - name: Save scan cache
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5
         with:
           path: .heckler-dep-scan-result
           key: heckler-deps-${{ steps.lock-hash.outputs.hash }}
