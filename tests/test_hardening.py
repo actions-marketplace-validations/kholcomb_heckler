@@ -18,7 +18,7 @@ from heckler.characters import DANGEROUS_UNICODE_RE, Severity, ThreatCategory, g
 from heckler.cli import main
 from heckler.config import load_config
 from heckler.lockfile import parse_changed_packages
-from heckler.scanner import Scanner
+from heckler.scanner import KNOWN_FILENAMES, Scanner
 from heckler.vet import _safe_zip_extract, extract_package
 
 
@@ -246,3 +246,37 @@ class TestExtendedExtensions:
         scanner = Scanner()
         findings = scanner.scan_file(f)
         assert len(findings) == 1, f"Extension {ext} was not scanned"
+
+
+# ---------------------------------------------------------------------------
+# 8. Well-known extensionless filenames
+# ---------------------------------------------------------------------------
+
+class TestKnownFilenames:
+    @pytest.mark.parametrize("name", [
+        "Makefile", "Dockerfile", "Gemfile", "Rakefile", "Vagrantfile",
+        "Procfile", "Justfile", "BUILD", "Podfile",
+        ".gitattributes", ".gitignore", ".dockerignore",
+    ])
+    def test_known_filenames_scanned_in_directory(self, tmp_path: Path, name: str) -> None:
+        f = tmp_path / name
+        f.write_text('VAR = "\uFE01"\n', encoding='utf-8')
+        scanner = Scanner()
+        findings = scanner.scan_path(tmp_path)
+        matched = [fd for fd in findings if name in fd.file]
+        assert len(matched) == 1, f"Known file {name} was not scanned"
+
+    def test_unknown_extensionless_file_skipped(self, tmp_path: Path) -> None:
+        f = tmp_path / "randomfile"
+        f.write_text('VAR = "\uFE01"\n', encoding='utf-8')
+        scanner = Scanner()
+        findings = scanner.scan_path(tmp_path)
+        assert not any("randomfile" in fd.file for fd in findings)
+
+    def test_all_text_scans_extensionless(self, tmp_path: Path) -> None:
+        """--all-text mode should scan even unknown extensionless files."""
+        f = tmp_path / "randomfile"
+        f.write_text('VAR = "\uFE01"\n', encoding='utf-8')
+        scanner = Scanner(text_extensions=None)
+        findings = scanner.scan_path(tmp_path)
+        assert any("randomfile" in fd.file for fd in findings)

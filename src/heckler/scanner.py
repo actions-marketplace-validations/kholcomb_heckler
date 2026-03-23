@@ -101,6 +101,30 @@ DEFAULT_TEXT_EXTENSIONS = frozenset({
     '.tcl',                                        # Tcl
 })
 
+# Well-known files without extensions that should be scanned
+KNOWN_FILENAMES = frozenset({
+    'Makefile', 'GNUmakefile', 'makefile',
+    'Dockerfile',
+    'Gemfile', 'Rakefile',
+    'Vagrantfile',
+    'Brewfile',
+    'Procfile',
+    'Justfile', 'justfile',
+    'SConstruct', 'SConscript',
+    'Jakefile', 'Cakefile',
+    'Taskfile',
+    'BUILD', 'WORKSPACE',                         # Bazel
+    'Podfile',                                     # CocoaPods
+    'Fastfile', 'Appfile', 'Matchfile',            # Fastlane
+    'Berksfile',                                   # Berkshelf
+    'Guardfile',                                   # Guard
+    'Dangerfile',                                  # Danger
+    'Steepfile',                                   # Steep (Ruby types)
+    '.gitattributes', '.gitignore', '.gitmodules',
+    '.dockerignore', '.npmignore', '.eslintrc',
+    '.babelrc', '.prettierrc',
+})
+
 DEFAULT_SKIP_DIRS = frozenset({
     'node_modules', 'vendor', '.git', '__pycache__', '.venv', 'venv',
     'dist', 'build', 'target', '.next', '.nuxt', 'coverage',
@@ -207,7 +231,10 @@ class Scanner:
             exts = self._extensions_for_path(dp, effective_exts)
             for fname in filenames:
                 fpath = dp / fname
-                if (exts is None or fpath.suffix.lower() in exts) and not self._is_excluded(fpath):
+                if self._is_excluded(fpath):
+                    continue
+                has_ext = bool(fpath.suffix)
+                if exts is None or (has_ext and fpath.suffix.lower() in exts) or (not has_ext and fname in KNOWN_FILENAMES):
                     all_findings.extend(self.scan_file(fpath))
         return all_findings
 
