@@ -4,7 +4,7 @@
 
 # Heckler
 
-Zero-dependency Python tool that can detect dangerous invisible Unicode characters in source code and dependencies. Provides coverage on 414 codepoints across 6 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, and exotic whitespace.
+Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Language-agnostic source scanning covers 60+ file extensions and well-known extensionless files (Makefile, Dockerfile, etc.) across all major ecosystems. Provides coverage on 416 codepoints across 6 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, and exotic whitespace.
 
 ## Install
 
@@ -40,13 +40,13 @@ heckler --format sarif .
 | Category | Codepoints | Severity | Example |
 |---|---|---|---|
 | Variation Selectors (Glassworm) | U+FE00-FE0F, U+E0100-E01EF, U+180B-180D | CRITICAL/HIGH | Invisible payload encoding |
-| Bidi controls (Trojan Source) | U+202A-202E, U+2066-2069, U+200E-200F, U+061C | CRITICAL/HIGH | Code displays differently than it executes |
+| Bidi controls (Trojan Source) | U+202A-202E, U+2066-2069, U+2028-2029, U+200E-200F, U+061C | CRITICAL/HIGH | Code displays differently than it executes |
 | Tag characters | U+E0001, U+E0020-E007F | HIGH | Invisible ASCII mirror used in prompt injection |
 | Zero-width characters | U+200B-200D, U+FEFF, U+2060 | MEDIUM | Steganographic encoding, string comparison bypass |
 | Invisible identifiers | U+3164, U+FFA0, U+2800, U+115F-1160 | MEDIUM | Invisible variable/function names |
 | Invisible format/whitespace | U+00AD, U+2000-200A, U+2061-2064, U+3000, ... | LOW-MEDIUM | String comparison bypass, obfuscation |
 
-414 codepoints total. Severity levels: CRITICAL > HIGH > MEDIUM > LOW > INFO.
+416 codepoints total. Severity levels: CRITICAL > HIGH > MEDIUM > LOW > INFO.
 
 ## CLI Reference
 
@@ -64,7 +64,7 @@ heckler --vet PACKAGE [--registry npm|pypi]
 | `--diff-only` | With `--scan-deps`, only scan packages changed in staged lockfile diffs |
 | `--vet PACKAGE` | Download and scan a package before installing |
 | `--registry npm\|pypi` | Package registry for `--vet` (auto-detected if omitted) |
-| `--config PATH` | Path to `.heckler.yml` config file |
+| `--config PATH` | Path to `.heckler.yml` config file (error if not found) |
 | `--no-color` | Disable colored output |
 | `--quiet` | Only output findings, no summary |
 | `--all-text` | Scan all text files regardless of extension |
@@ -107,11 +107,51 @@ extra_extensions:          # Additional file extensions to scan
 
 Also reads `[tool.heckler]` from `pyproject.toml`.
 
-Suppress individual lines with an inline comment:
+Suppress individual lines with an inline comment (must use a real comment token — `//`, `#`, `/*`, `--`, or `;`):
 
 ```javascript
 const emoji = "\uFE0F"; // heckler-ignore
 ```
+
+```python
+emoji = "\uFE0F"  # heckler-ignore
+```
+
+Note: Placing `heckler-ignore` inside a string literal or variable name does **not** suppress detection — this prevents adversaries from abusing the ignore mechanism.
+
+## Language Support
+
+Source scanning is **language-agnostic** — the regex-based detector works on any text file. Out of the box, heckler scans 60+ file extensions:
+
+| Category | Extensions |
+|---|---|
+| Web / JS / TS | `.js`, `.cjs`, `.mjs`, `.ts`, `.jsx`, `.tsx`, `.vue`, `.svelte` |
+| Python | `.py`, `.pyi` |
+| Systems | `.c`, `.cpp`, `.h`, `.hpp`, `.rs`, `.go`, `.zig`, `.nim`, `.d` |
+| JVM | `.java`, `.kt`, `.scala`, `.groovy`, `.clj`, `.cljs`, `.cljc` |
+| .NET | `.cs`, `.vb`, `.vbs` |
+| Functional | `.hs`, `.lhs`, `.ml`, `.mli`, `.elm`, `.ex`, `.exs`, `.erl`, `.hrl`, `.purs`, `.rkt`, `.lisp`, `.cl`, `.el`, `.jl` |
+| Mobile | `.swift`, `.dart`, `.m`, `.mm` |
+| Scripting | `.rb`, `.php`, `.lua`, `.pl`, `.r`, `.tcl`, `.cr` |
+| Shell | `.sh`, `.bash`, `.zsh`, `.ps1`, `.bat`, `.cmd`, `.fish` |
+| Config / Data | `.yaml`, `.yml`, `.json`, `.toml`, `.xml`, `.sql`, `.graphql`, `.gql`, `.proto`, `.tf`, `.hcl` |
+| Templates | `.html`, `.css`, `.scss`, `.ejs`, `.hbs`, `.njk`, `.pug`, `.jinja` |
+| Build | `.gradle`, `.rake`, `.cmake`, `.mk` |
+| Docs | `.md`, `.txt` |
+
+Well-known extensionless files are also scanned: `Makefile`, `Dockerfile`, `Gemfile`, `Rakefile`, `Vagrantfile`, `Procfile`, `Justfile`, `BUILD`, `Podfile`, `.gitignore`, `.dockerignore`, and more.
+
+Use `--all-text` to scan every text file regardless of extension.
+
+### Dependency / Supply Chain Coverage
+
+| Capability | Supported Ecosystems |
+|---|---|
+| `--vet` (pre-install scan) | npm, PyPI |
+| `--diff-only` (lockfile parsing) | npm, yarn, pnpm, pip, poetry |
+| `--scan-deps` (installed deps) | node\_modules, vendor, site-packages, target (Cargo) |
+
+Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet implemented — a warning is emitted when using `--diff-only` with these.
 
 ## CI/CD Integration
 
@@ -187,6 +227,7 @@ The test suite includes:
 - **Archive safety** — builds tar/zip archives with path traversal and symlink style payloads, verifies they're safely rejected
 - **Vet end-to-end** — builds fake `.tgz` and `.whl` packages with planted Glassworm signatures, extracts and scans them
 - **Git integration** — stages a real lockfile in the project repo, parses the diff, resolves package directories, and scans planted findings through the full `--diff-only` chain (non-destructive, cleanup in `finally` blocks)
+- **Hardening** — tests for bypass resistance including null-byte injection, heckler-ignore abuse, U+2028/2029 detection, missing config errors, multi-language extension coverage, and extensionless file scanning
 
 ## License
 
