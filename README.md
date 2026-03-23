@@ -62,7 +62,7 @@ heckler --vet PACKAGE [--registry npm|pypi]
 | `--severity LEVEL` | Minimum severity to report (default: low) |
 | `--scan-deps` | Include dependency directories |
 | `--diff-only` | With `--scan-deps`, only scan packages changed in staged lockfile diffs |
-| `--vet PACKAGE` | Download and scan a package before installing (prefers wheels to avoid executing setup.py) |
+| `--vet PACKAGE` | Download and scan a package before installing (fetches directly from public registries) |
 | `--registry npm\|pypi` | Package registry for `--vet` (auto-detected if omitted) |
 | `--config PATH` | Path to `.heckler.yml` config file (error if not found) |
 | `--no-color` | Disable colored output |
@@ -162,6 +162,8 @@ Use `--all-text` to scan every text file regardless of extension.
 | `--scan-deps` (installed deps) | node\_modules, vendor, site-packages, target (Cargo) |
 
 Lockfiles for Cargo, Go, Ruby, and Composer are detected but parsers are not yet implemented — a warning is emitted when using `--diff-only` with these.
+
+> **Private registries:** `--vet` fetches packages directly from the public npm and PyPI registries (`registry.npmjs.org`, `pypi.org`) using only Python's stdlib — it does **not** shell out to `npm` or `pip` and does **not** execute any package code during download. This means private or corporate registries are not supported by `--vet`. If you need to scan packages from a private registry, download them manually and use `heckler <path>` to scan the extracted source.
 
 ## CI/CD Integration
 
