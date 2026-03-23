@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
@@ -23,5 +23,19 @@ jobs:
           pip install build
           python -m build
 
-      - name: Publish
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # release/v1
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release create "$TAG_NAME" dist/* --generate-notes
+
+      - name: Update major version tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          MAJOR=$(echo "$TAG_NAME" | grep -oE '^v[0-9]+')
+          git tag -f "$MAJOR" "$TAG_NAME"
+          git push -f origin "$MAJOR"

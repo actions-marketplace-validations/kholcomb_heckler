@@ -4,8 +4,8 @@
 
 | Version | Support Level |
 |---------|--------------|
-| 0.3.x   | Supported -- receives security fixes |
-| < 0.3.0 | Best-effort -- upgrade recommended |
+| 1.x     | Supported -- receives security fixes |
+| < 1.0.0 | Unsupported -- upgrade required |
 
 ## Reporting a Vulnerability
 
