@@ -62,7 +62,7 @@ heckler --vet PACKAGE [--registry npm|pypi]
 | `--severity LEVEL` | Minimum severity to report (default: low) |
 | `--scan-deps` | Include dependency directories |
 | `--diff-only` | With `--scan-deps`, only scan packages changed in staged lockfile diffs |
-| `--vet PACKAGE` | Download and scan a package before installing |
+| `--vet PACKAGE` | Download and scan a package before installing (prefers wheels to avoid executing setup.py) |
 | `--registry npm\|pypi` | Package registry for `--vet` (auto-detected if omitted) |
 | `--config PATH` | Path to `.heckler.yml` config file (error if not found) |
 | `--no-color` | Disable colored output |
@@ -107,7 +107,17 @@ extra_extensions:          # Additional file extensions to scan
 
 Also reads `[tool.heckler]` from `pyproject.toml`.
 
-Suppress individual lines with an inline comment (must use a real comment token — `//`, `#`, `/*`, `--`, or `;`):
+Suppress the next line with a dedicated directive (preferred):
+
+```javascript
+// heckler-ignore-next-line
+const emoji = "\uFE0F";
+
+// heckler-ignore-next-line U+FE0F U+FE0E
+const selectors = "\uFE0F\uFE0E";  // only listed codepoints suppressed
+```
+
+Or suppress inline (legacy, still supported):
 
 ```javascript
 const emoji = "\uFE0F"; // heckler-ignore
@@ -117,11 +127,11 @@ const emoji = "\uFE0F"; // heckler-ignore
 emoji = "\uFE0F"  # heckler-ignore
 ```
 
-Note: Placing `heckler-ignore` inside a string literal or variable name does **not** suppress detection — this prevents adversaries from abusing the ignore mechanism.
+Supported comment tokens: `//`, `#`, `/*`, `--`, `;`. Placing `heckler-ignore` inside a string literal or variable name does **not** suppress detection. Suppression directives are **never honored in dependency code** (node\_modules, vendor, site-packages, target) to prevent malicious packages from hiding attacks.
 
 ## Language Support
 
-Source scanning is **language-agnostic** — the regex-based detector works on any text file. Out of the box, heckler scans 60+ file extensions:
+Source scanning is **language-agnostic** — the regex-based detector works on any text file. Files encoded as UTF-16 or UTF-32 (with BOM) are automatically detected and decoded correctly. Out of the box, heckler scans 60+ file extensions:
 
 | Category | Extensions |
 |---|---|
@@ -227,7 +237,7 @@ The test suite includes:
 - **Archive safety** — builds tar/zip archives with path traversal and symlink style payloads, verifies they're safely rejected
 - **Vet end-to-end** — builds fake `.tgz` and `.whl` packages with planted Glassworm signatures, extracts and scans them
 - **Git integration** — stages a real lockfile in the project repo, parses the diff, resolves package directories, and scans planted findings through the full `--diff-only` chain (non-destructive, cleanup in `finally` blocks)
-- **Hardening** — tests for bypass resistance including null-byte injection, heckler-ignore abuse, U+2028/2029 detection, missing config errors, multi-language extension coverage, and extensionless file scanning
+- **Hardening** — tests for bypass resistance including null-byte injection, heckler-ignore abuse, U+2028/2029 detection, UTF-16/32 encoding evasion, missing config errors, multi-language extension coverage, and extensionless file scanning
 
 ## License
 
