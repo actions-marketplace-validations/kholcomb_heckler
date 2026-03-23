@@ -311,7 +311,9 @@ class Scanner:
                 if self._is_excluded(fpath):
                     continue
                 has_ext = bool(fpath.suffix)
-                if exts is None or (has_ext and fpath.suffix.lower() in exts) or (not has_ext and fname in KNOWN_FILENAMES):
+                ext_match = has_ext and fpath.suffix.lower() in exts
+                name_match = not has_ext and fname in KNOWN_FILENAMES
+                if exts is None or ext_match or name_match:
                     all_findings.extend(self.scan_file(fpath))
         return all_findings
 
@@ -361,6 +363,10 @@ class Scanner:
                 return "dependency", parts[idx + 1]
         if 'vendor' in parts:
             idx = parts.index('vendor')
+            if idx + 1 < len(parts):
+                return "dependency", parts[idx + 1]
+        if 'target' in parts:
+            idx = parts.index('target')
             if idx + 1 < len(parts):
                 return "dependency", parts[idx + 1]
         return "project", None

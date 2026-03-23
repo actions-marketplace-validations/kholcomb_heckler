@@ -7,20 +7,17 @@ ecosystem warnings, and zip member filtering.
 
 from __future__ import annotations
 
-import io
-import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from heckler.characters import DANGEROUS_UNICODE_RE, Severity, ThreatCategory, get_char_info
+from heckler.characters import DANGEROUS_UNICODE_RE, Severity, get_char_info
 from heckler.cli import main
 from heckler.config import load_config
 from heckler.lockfile import parse_changed_packages
-from heckler.scanner import DEP_SCAN_EXTENSIONS, KNOWN_FILENAMES, Scanner
+from heckler.scanner import DEP_SCAN_EXTENSIONS, Scanner
 from heckler.vet import _safe_zip_extract, extract_package
-
 
 # ---------------------------------------------------------------------------
 # 1. U+2028 / U+2029 detection
@@ -255,7 +252,7 @@ class TestNullByteHardening:
     def test_null_after_dangerous_chars_still_detected(self, tmp_path: Path) -> None:
         """Dangerous chars before a null byte should still be found."""
         f = tmp_path / "tricky.js"
-        content = 'const x = "\uFE01";\n'.encode('utf-8') + b'\x00binary stuff'
+        content = 'const x = "\uFE01";\n'.encode() + b'\x00binary stuff'
         f.write_bytes(content)
 
         scanner = Scanner()
@@ -273,7 +270,7 @@ class TestNullByteHardening:
     def test_null_byte_midfile_scans_prefix(self, tmp_path: Path) -> None:
         """Dangerous chars in the text portion before null should be found."""
         f = tmp_path / "mixed.js"
-        evil = 'line1 \u200B ok\nline2 \u202E bad\n'.encode('utf-8')
+        evil = 'line1 \u200B ok\nline2 \u202E bad\n'.encode()
         f.write_bytes(evil + b'\x00' + b'binary tail')
         scanner = Scanner()
         findings = scanner.scan_file(f)
@@ -469,3 +466,34 @@ class TestKnownFilenames:
         scanner = Scanner(text_extensions=None)
         findings = scanner.scan_path(tmp_path)
         assert any("randomfile" in fd.file for fd in findings)
+
+
+# ---------------------------------------------------------------------------
+# 10. target/ classified as dependency (suppression blocked)
+# ---------------------------------------------------------------------------
+
+class TestTargetDirClassifiedAsDependency:
+    """Files inside target/ must be classified as dependency code so that
+    suppression directives are never honored — consistent with node_modules,
+    vendor, and site-packages."""
+
+    def test_target_dir_inline_ignore_not_honored(self) -> None:
+        scanner = Scanner()
+        text = 'let x = "\uFE01"; // heckler-ignore\n'
+        findings = scanner.scan_text(text, "target/some-crate/src/lib.rs")
+        assert len(findings) == 1
+        assert findings[0].codepoint == 0xFE01
+
+    def test_target_dir_next_line_not_honored(self) -> None:
+        scanner = Scanner()
+        text = '// heckler-ignore-next-line\nlet x = "\u202E";\n'
+        findings = scanner.scan_text(text, "target/some-crate/src/lib.rs")
+        assert len(findings) == 1
+        assert findings[0].codepoint == 0x202E
+
+    def test_target_dir_classified_as_dependency(self) -> None:
+        scanner = Scanner()
+        text = 'let x = "\uFE01";\n'
+        findings = scanner.scan_text(text, "target/some-crate/src/lib.rs")
+        assert findings[0].source == "dependency"
+        assert findings[0].package == "some-crate"

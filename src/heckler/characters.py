@@ -178,7 +178,7 @@ DANGEROUS_UNICODE_RE = re.compile(
     r'\u17B4-\u17B5'    # Khmer Vowel Inherent
     r'\u180B-\u180E'    # Mongolian Free Variation Selectors + Vowel Separator
     r'\u2000-\u200F'    # Typographic spaces + ZWSP/ZWNJ/ZWJ/LRM/RLM
-    r'\u2028-\u202F'    # Line/Paragraph separators + Bidi embeddings/overrides + Narrow No-Break Space
+    r'\u2028-\u202F'    # Line/Para seps + Bidi embeddings/overrides + NNBSP
     r'\u205F'           # Medium Mathematical Space
     r'\u2060-\u206F'    # Word Joiner, invisible operators, bidi isolates, deprecated format chars
     r'\u2800'           # Braille Pattern Blank
