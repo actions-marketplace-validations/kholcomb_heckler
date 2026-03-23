@@ -16,7 +16,12 @@ from heckler.characters import DANGEROUS_UNICODE_RE, Severity, get_char_info
 from heckler.cli import main
 from heckler.config import load_config
 from heckler.lockfile import parse_changed_packages
-from heckler.scanner import DEP_SCAN_EXTENSIONS, Scanner
+from heckler.scanner import (
+    DEP_SCAN_EXTENSIONS,
+    DEFAULT_TEXT_EXTENSIONS,
+    KNOWN_FILENAMES,
+    Scanner,
+)
 from heckler.vet import _safe_zip_extract, extract_package
 
 # ---------------------------------------------------------------------------
@@ -357,29 +362,26 @@ class TestZipMemberFiltering:
 # ---------------------------------------------------------------------------
 
 class TestExtendedExtensions:
-    @pytest.mark.parametrize("ext", [".ps1", ".bat", ".cmd", ".fish", ".ejs",
-                                      ".hbs", ".gradle", ".proto", ".graphql"])
-    def test_new_extensions_scanned(self, tmp_path: Path, ext: str) -> None:
-        f = tmp_path / f"test{ext}"
-        f.write_text('payload = "\uFE01"\n', encoding='utf-8')
-        scanner = Scanner()
-        findings = scanner.scan_file(f)
-        assert len(findings) == 1
+    # Expected extensions added across the hardening commits.
+    _EXPECTED = {
+        '.ps1', '.bat', '.cmd', '.fish', '.ejs', '.hbs', '.gradle',
+        '.proto', '.graphql', '.dart', '.ex', '.exs', '.erl', '.hrl',
+        '.zig', '.nim', '.ml', '.mli', '.hs', '.lhs', '.clj', '.cljs',
+        '.cljc', '.jl', '.elm', '.v', '.d', '.ada', '.adb', '.ads',
+        '.f90', '.groovy', '.cr', '.purs', '.rkt', '.lisp', '.cl',
+        '.el', '.asm', '.s', '.m', '.mm', '.vb', '.vbs', '.pp', '.pas',
+        '.tcl',
+    }
 
-    @pytest.mark.parametrize("ext", [
-        ".dart", ".ex", ".exs", ".erl", ".hrl", ".zig", ".nim",
-        ".ml", ".mli", ".hs", ".lhs", ".clj", ".cljs", ".cljc",
-        ".jl", ".elm", ".v", ".d", ".ada", ".adb", ".ads",
-        ".f90", ".groovy", ".cr", ".purs", ".rkt",
-        ".lisp", ".cl", ".el", ".asm", ".s",
-        ".m", ".mm", ".vb", ".vbs", ".pp", ".pas", ".tcl",
-    ])
-    def test_modern_language_extensions_scanned(self, tmp_path: Path, ext: str) -> None:
-        f = tmp_path / f"test{ext}"
-        f.write_text('payload = "\uFE01"\n', encoding='utf-8')
-        scanner = Scanner()
-        findings = scanner.scan_file(f)
-        assert len(findings) == 1, f"Extension {ext} was not scanned"
+    def test_all_expected_extensions_present(self) -> None:
+        missing = self._EXPECTED - DEFAULT_TEXT_EXTENSIONS
+        assert not missing, f"Missing from DEFAULT_TEXT_EXTENSIONS: {missing}"
+
+    def test_extension_actually_scanned(self, tmp_path: Path) -> None:
+        """Smoke-test: a file with a non-obvious extension is scanned."""
+        f = tmp_path / "test.zig"
+        f.write_text('const x = "\uFE01";\n')
+        assert len(Scanner().scan_file(f)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -387,50 +389,36 @@ class TestExtendedExtensions:
 # ---------------------------------------------------------------------------
 
 class TestDepScanExtensions:
-    @pytest.mark.parametrize("ext", [
-        ".rs", ".go", ".java", ".kt", ".scala", ".cs", ".swift",
-        ".c", ".cpp", ".h", ".hpp", ".lua", ".dart", ".ex", ".exs",
-        ".erl", ".zig", ".nim", ".ml", ".hs", ".clj", ".jl", ".cr",
-    ])
-    def test_dep_extensions_include_multi_lang(self, ext: str) -> None:
-        assert ext in DEP_SCAN_EXTENSIONS, f"{ext} missing from DEP_SCAN_EXTENSIONS"
+    _EXPECTED = {
+        '.rs', '.go', '.java', '.kt', '.scala', '.cs', '.swift',
+        '.c', '.cpp', '.h', '.hpp', '.lua', '.dart', '.ex', '.exs',
+        '.erl', '.zig', '.nim', '.ml', '.hs', '.clj', '.jl', '.cr',
+    }
 
-    def test_scan_deps_finds_rust_file(self, tmp_path: Path) -> None:
-        nm = tmp_path / "vendor" / "some-crate"
-        nm.mkdir(parents=True)
-        (nm / "lib.rs").write_text('let x = "\uFE01";\n', encoding='utf-8')
+    def test_all_expected_dep_extensions_present(self) -> None:
+        missing = self._EXPECTED - DEP_SCAN_EXTENSIONS
+        assert not missing, f"Missing from DEP_SCAN_EXTENSIONS: {missing}"
 
-        scanner = Scanner(scan_deps=True)
-        findings = scanner.scan_path(tmp_path)
+    def test_scan_deps_finds_vendor_file(self, tmp_path: Path) -> None:
+        """Dep scanning picks up source files inside vendor/."""
+        pkg = tmp_path / "vendor" / "some-crate"
+        pkg.mkdir(parents=True)
+        (pkg / "lib.rs").write_text('let x = "\uFE01";\n')
+        findings = Scanner(scan_deps=True).scan_path(tmp_path)
         assert any(".rs" in f.file for f in findings)
 
-    def test_scan_deps_finds_java_file(self, tmp_path: Path) -> None:
-        nm = tmp_path / "vendor" / "some-lib"
-        nm.mkdir(parents=True)
-        (nm / "Main.java").write_text('String x = "\uFE01";\n', encoding='utf-8')
-
-        scanner = Scanner(scan_deps=True)
-        findings = scanner.scan_path(tmp_path)
-        assert any(".java" in f.file for f in findings)
-
     def test_scan_deps_includes_target_dir(self, tmp_path: Path) -> None:
-        """Rust target/ dir should be scanned when --scan-deps is set."""
         target = tmp_path / "target" / "debug" / "build" / "some-crate"
         target.mkdir(parents=True)
-        (target / "lib.rs").write_text('let x = "\uFE01";\n', encoding='utf-8')
-
-        scanner = Scanner(scan_deps=True)
-        findings = scanner.scan_path(tmp_path)
+        (target / "lib.rs").write_text('let x = "\uFE01";\n')
+        findings = Scanner(scan_deps=True).scan_path(tmp_path)
         assert any("target" in f.file for f in findings)
 
     def test_target_skipped_without_scan_deps(self, tmp_path: Path) -> None:
-        """target/ should still be skipped when --scan-deps is not set."""
         target = tmp_path / "target" / "debug"
         target.mkdir(parents=True)
-        (target / "lib.rs").write_text('let x = "\uFE01";\n', encoding='utf-8')
-
-        scanner = Scanner(scan_deps=False)
-        findings = scanner.scan_path(tmp_path)
+        (target / "lib.rs").write_text('let x = "\uFE01";\n')
+        findings = Scanner(scan_deps=False).scan_path(tmp_path)
         assert not any("target" in f.file for f in findings)
 
 
@@ -439,33 +427,28 @@ class TestDepScanExtensions:
 # ---------------------------------------------------------------------------
 
 class TestKnownFilenames:
-    @pytest.mark.parametrize("name", [
-        "Makefile", "Dockerfile", "Gemfile", "Rakefile", "Vagrantfile",
-        "Procfile", "Justfile", "BUILD", "Podfile",
-        ".gitattributes", ".gitignore", ".dockerignore",
-    ])
-    def test_known_filenames_scanned_in_directory(self, tmp_path: Path, name: str) -> None:
-        f = tmp_path / name
-        f.write_text('VAR = "\uFE01"\n', encoding='utf-8')
-        scanner = Scanner()
-        findings = scanner.scan_path(tmp_path)
-        matched = [fd for fd in findings if name in fd.file]
-        assert len(matched) == 1, f"Known file {name} was not scanned"
+    def test_expected_filenames_in_set(self) -> None:
+        expected = {
+            'Makefile', 'Dockerfile', 'Gemfile', 'Rakefile', 'Vagrantfile',
+            'Procfile', 'Justfile', 'BUILD', 'Podfile',
+            '.gitattributes', '.gitignore', '.dockerignore',
+        }
+        missing = expected - KNOWN_FILENAMES
+        assert not missing, f"Missing from KNOWN_FILENAMES: {missing}"
+
+    def test_known_filename_actually_scanned(self, tmp_path: Path) -> None:
+        """Smoke-test: a Makefile in a directory walk is picked up."""
+        (tmp_path / "Makefile").write_text('VAR = "\uFE01"\n')
+        findings = Scanner().scan_path(tmp_path)
+        assert any("Makefile" in f.file for f in findings)
 
     def test_unknown_extensionless_file_skipped(self, tmp_path: Path) -> None:
-        f = tmp_path / "randomfile"
-        f.write_text('VAR = "\uFE01"\n', encoding='utf-8')
-        scanner = Scanner()
-        findings = scanner.scan_path(tmp_path)
-        assert not any("randomfile" in fd.file for fd in findings)
+        (tmp_path / "randomfile").write_text('VAR = "\uFE01"\n')
+        assert not Scanner().scan_path(tmp_path)
 
     def test_all_text_scans_extensionless(self, tmp_path: Path) -> None:
-        """--all-text mode should scan even unknown extensionless files."""
-        f = tmp_path / "randomfile"
-        f.write_text('VAR = "\uFE01"\n', encoding='utf-8')
-        scanner = Scanner(text_extensions=None)
-        findings = scanner.scan_path(tmp_path)
-        assert any("randomfile" in fd.file for fd in findings)
+        (tmp_path / "randomfile").write_text('VAR = "\uFE01"\n')
+        assert Scanner(text_extensions=None).scan_path(tmp_path)
 
 
 # ---------------------------------------------------------------------------

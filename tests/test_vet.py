@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import tarfile
+import unittest.mock
 import zipfile
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from heckler.vet import (
     _UnsafeArchiveError,
     _validate_archive_member,
     detect_registry,
+    download_package,
     extract_package,
 )
 
@@ -119,6 +121,39 @@ class TestSafeTarExtract:
         extract_dir.mkdir()
         with pytest.raises(_UnsafeArchiveError, match="(?i)unsafe|link|absolute"):
             _safe_tar_extract(tar_path, extract_dir, extract_dir.resolve())
+
+
+class TestDownloadPackageOrder:
+    """Verify pip download tries wheels before source distributions."""
+
+    def test_pypi_prefers_wheel_and_warns_on_source_fallback(
+        self, tmp_path: Path, capsys: object,
+    ) -> None:
+        """First pip call must use --only-binary (safe). When that fails,
+        fall back to --no-binary and emit a setup.py warning."""
+        fake_sdist = tmp_path / "pkg-1.0.tar.gz"
+        fake_sdist.write_bytes(b"")
+
+        def mock_run(cmd, **kwargs):
+            result = unittest.mock.MagicMock()
+            if "--only-binary" in cmd:
+                result.returncode = 1
+                result.stderr = "no wheel"
+            elif "--no-binary" in cmd:
+                result.returncode = 0
+            else:
+                result.returncode = 1
+            return result
+
+        with unittest.mock.patch("heckler.vet.subprocess.run", side_effect=mock_run) as m:
+            download_package("pkg==1.0", "pypi", str(tmp_path))
+            # First attempt must be the safe wheel-only path
+            assert "--only-binary" in m.call_args_list[0][0][0]
+            # Second attempt is the source fallback
+            assert "--no-binary" in m.call_args_list[1][0][0]
+            # Warning about setup.py must appear
+            captured = capsys.readouterr()  # type: ignore[attr-defined]
+            assert "setup.py" in captured.err
 
 
 class TestVetEndToEnd:

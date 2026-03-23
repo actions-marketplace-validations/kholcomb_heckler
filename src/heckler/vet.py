@@ -58,15 +58,23 @@ def download_package(spec: str, registry: str, tmpdir: str) -> Path:
 
     else:  # pypi
         pip_cmd = 'pip3' if shutil.which('pip3') else 'pip'
-        # Try source distribution first
+        # Try wheel first — wheels are pre-built and do NOT execute setup.py,
+        # so they are safe to download for scanning.  Source distributions may
+        # run arbitrary code via setup.py during the build step, defeating the
+        # purpose of "scan before install".
         result = subprocess.run(
-            [pip_cmd, 'download', '--no-deps', '--no-binary', ':all:', '-d', tmpdir, spec],
+            [pip_cmd, 'download', '--no-deps', '--only-binary', ':all:', '-d', tmpdir, spec],
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode != 0:
-            # Fall back to wheel
+            # Fall back to source distribution (may execute setup.py)
+            print(
+                "Warning: No wheel available — falling back to source distribution. "
+                "This may execute package build scripts (setup.py).",
+                file=sys.stderr,
+            )
             result = subprocess.run(
-                [pip_cmd, 'download', '--no-deps', '-d', tmpdir, spec],
+                [pip_cmd, 'download', '--no-deps', '--no-binary', ':all:', '-d', tmpdir, spec],
                 capture_output=True, text=True, timeout=120,
             )
             if result.returncode != 0:
