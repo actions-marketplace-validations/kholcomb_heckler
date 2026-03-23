@@ -123,7 +123,7 @@ class Scanner:
         if self._is_binary(filepath):
             return []
         try:
-            text = filepath.read_text(encoding='utf-8', errors='ignore')
+            text = filepath.read_text(encoding='utf-8', errors='replace')
         except (OSError, PermissionError):
             return []
         return self.scan_text(text, str(filepath))

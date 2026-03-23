@@ -132,8 +132,9 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
             raise _UnsafeArchiveError(f"Unsafe archive: {e}") from e
 
         # Manual safe extraction for Python 3.9-3.11
+        members = tf.getmembers()
         total_size = 0
-        for member in tf.getmembers():
+        for member in members:
             _validate_archive_member(member.name, resolved_root, extract_dir)
 
             if member.issym() or member.islnk():
@@ -154,11 +155,9 @@ def _safe_tar_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
                     f"Total extraction size exceeds {_MAX_TOTAL_SIZE} bytes"
                 )
 
-        # Safe to extract — rewind and extract only regular files/dirs
-        tf.extractall(extract_dir, members=[
-            m for m in tf.getmembers()
-            if m.isfile() or m.isdir()
-        ])
+        # Safe to extract — reuse validated member list
+        safe_members = [m for m in members if m.isfile() or m.isdir()]
+        tf.extractall(extract_dir, members=safe_members)
 
 
 def _safe_zip_extract(archive_path: Path, extract_dir: Path, resolved_root: Path) -> None:
@@ -198,7 +197,7 @@ def _validate_archive_member(member_name: str, resolved_root: Path, extract_dir:
         )
     # Resolve the target path and verify it's under the extraction root
     target = (extract_dir / member_name).resolve()
-    if not str(target).startswith(str(resolved_root)):
+    if not target.is_relative_to(resolved_root):
         raise _UnsafeArchiveError(
             f"Path escapes extraction directory: {member_name}"
         )
