@@ -340,9 +340,12 @@ class Scanner:
                 if self._is_excluded(fpath):
                     continue
                 has_ext = bool(fpath.suffix)
+                if exts is None:
+                    all_findings.extend(self.scan_file(fpath))
+                    continue
                 ext_match = has_ext and fpath.suffix.lower() in exts
                 name_match = not has_ext and fname in KNOWN_FILENAMES
-                if exts is None or ext_match or name_match:
+                if ext_match or name_match:
                     all_findings.extend(self.scan_file(fpath))
         return all_findings
 

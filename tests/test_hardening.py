@@ -17,8 +17,8 @@ from heckler.cli import main
 from heckler.config import load_config
 from heckler.lockfile import parse_changed_packages
 from heckler.scanner import (
-    DEP_SCAN_EXTENSIONS,
     DEFAULT_TEXT_EXTENSIONS,
+    DEP_SCAN_EXTENSIONS,
     KNOWN_FILENAMES,
     Scanner,
 )
