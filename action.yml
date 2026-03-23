@@ -1,0 +1,73 @@
+name: 'Glassworm Detect'
+description: 'Detect dangerous invisible Unicode characters (Glassworm, Trojan Source, etc.)'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  path:
+    description: 'Path to scan'
+    required: false
+    default: '.'
+  scan-deps:
+    description: 'Include dependency directories (node_modules, vendor, etc.)'
+    required: false
+    default: 'false'
+  severity:
+    description: 'Minimum severity to report (critical, high, medium, low)'
+    required: false
+    default: 'low'
+  format:
+    description: 'Output format (text, json, sarif)'
+    required: false
+    default: 'text'
+  config:
+    description: 'Path to .heckler.yml config file'
+    required: false
+    default: ''
+  upload-sarif:
+    description: 'Upload SARIF results to GitHub Security tab'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install heckler
+      shell: bash
+      run: pip install "${{ github.action_path }}"
+
+    - name: Run scan
+      shell: bash
+      id: scan
+      run: |
+        ARGS="--ci --severity ${{ inputs.severity }}"
+
+        if [ "${{ inputs.scan-deps }}" = "true" ]; then
+          ARGS="$ARGS --scan-deps"
+        fi
+
+        if [ -n "${{ inputs.config }}" ]; then
+          ARGS="$ARGS --config ${{ inputs.config }}"
+        fi
+
+        if [ "${{ inputs.upload-sarif }}" = "true" ]; then
+          heckler $ARGS --format sarif ${{ inputs.path }} > heckler-results.sarif || true
+          heckler $ARGS ${{ inputs.path }}
+        elif [ "${{ inputs.format }}" = "sarif" ]; then
+          heckler $ARGS --format sarif ${{ inputs.path }}
+        else
+          heckler $ARGS --format ${{ inputs.format }} ${{ inputs.path }}
+        fi
+
+    - name: Upload SARIF
+      if: inputs.upload-sarif == 'true' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: heckler-results.sarif
+        category: heckler

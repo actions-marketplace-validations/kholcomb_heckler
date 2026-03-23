@@ -1,0 +1,2 @@
+# Mark test fixtures as generated so they don't trigger detection tools
+tests/fixtures/** linguist-generated=true

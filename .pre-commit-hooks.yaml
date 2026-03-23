@@ -1,0 +1,16 @@
+- id: heckler
+  name: Heckler Unicode Security Scan
+  description: Detect dangerous invisible Unicode characters in source code
+  entry: heckler --ci
+  language: python
+  types: [text]
+  require_serial: false
+
+- id: heckler-lockfile
+  name: Heckler Dependency Check (changed packages)
+  description: Scan changed dependencies for invisible Unicode attacks
+  entry: heckler --ci --scan-deps --diff-only
+  language: python
+  files: (package-lock\.json|yarn\.lock|pnpm-lock\.yaml|requirements\.txt|poetry\.lock|Pipfile\.lock|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock)$
+  pass_filenames: true
+  stages: [pre-commit]
