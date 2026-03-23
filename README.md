@@ -1,6 +1,10 @@
-# heckler
+<p align="center">
+  <img src="docs/assets/heckler-logo.png" alt="Heckler" width="300">
+</p>
 
-Zero-dependency Python tool that detects dangerous invisible Unicode characters in source code and dependencies. Covers 414 codepoints across 6 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, and exotic whitespace.
+# Heckler
+
+Zero-dependency Python tool that can detect dangerous invisible Unicode characters in source code and dependencies. Provides coverage on 414 codepoints across 6 threat categories including Glassworm supply chain attacks (Variation Selectors), Trojan Source (bidi controls, CVE-2021-42574), zero-width steganography, tag character injection, and exotic whitespace.
 
 ## Install
 
@@ -169,8 +173,6 @@ Requires GNU grep with PCRE support (`grep -P`). macOS users: `brew install grep
 
 ## Testing
 
-105 tests, zero mocks. Every test exercises real code paths with real Unicode data on real files.
-
 ```bash
 pip install -e ".[dev]"
 pytest
@@ -179,10 +181,10 @@ pytest
 The test suite includes:
 
 - **Character detection** — verifies the regex matches every dangerous codepoint and rejects safe ones
-- **Scanner** — writes real files with planted invisible Unicode to temp directories and scans them
+- **Scanner** — writes real files with **benign** planted invisible Unicode to temp directories and scans them
 - **CLI** — calls `main()` with real argv, validates JSON/SARIF output structure
 - **Config** — writes real `.heckler.yml` files and loads them through the config pipeline
-- **Archive safety** — builds malicious tar/zip archives with path traversal and symlink attacks, verifies they're rejected
+- **Archive safety** — builds tar/zip archives with path traversal and symlink style payloads, verifies they're safely rejected
 - **Vet end-to-end** — builds fake `.tgz` and `.whl` packages with planted Glassworm signatures, extracts and scans them
 - **Git integration** — stages a real lockfile in the project repo, parses the diff, resolves package directories, and scans planted findings through the full `--diff-only` chain (non-destructive, cleanup in `finally` blocks)
 
