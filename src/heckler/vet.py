@@ -1,19 +1,37 @@
-"""Package vetting: download and scan a package before installing it."""
+"""Package vetting: download and scan a package before installing it.
+
+Downloads packages directly from public registry APIs (registry.npmjs.org,
+pypi.org) using only stdlib urllib — no npm/pip subprocess required.  This
+eliminates the risk of executing package build scripts (setup.py) during
+download and removes the trust dependency on locally-installed package
+managers.
+"""
 
 from __future__ import annotations
 
 import contextlib
-import shutil
-import subprocess
+import json
 import sys
 import tarfile
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 from pathlib import Path
 
 from .config import Config
 from .formatters import get_formatter
 from .scanner import Scanner
+
+_NPM_REGISTRY = "https://registry.npmjs.org"
+_PYPI_REGISTRY = "https://pypi.org"
+
+_PRIVATE_REGISTRY_WARNING = (
+    "Note: --vet fetches packages directly from public registries "
+    "(registry.npmjs.org, pypi.org). Private or corporate registries "
+    "are not supported."
+)
 
 
 def detect_registry(spec: str) -> str:
@@ -32,65 +50,177 @@ def detect_registry(spec: str) -> str:
     return 'unknown'
 
 
-def check_tool_available(registry: str) -> None:
-    """Verify that the required package manager CLI is installed."""
+def _parse_spec(spec: str, registry: str) -> tuple[str, str | None]:
+    """Parse a package spec into (name, version | None).
+
+    For PyPI, only exact-match ``==`` versions are supported; range
+    specifiers (``>=``, ``~=``, etc.) cause a hard exit because the
+    registry JSON API has no solver.
+    """
     if registry == 'npm':
-        if shutil.which('npm') is None:
-            print("Error: npm not found. Install Node.js to vet npm packages.", file=sys.stderr)
-            sys.exit(2)
-    elif registry == 'pypi' and shutil.which('pip3') is None and shutil.which('pip') is None:
-            print("Error: pip not found. Install Python pip to vet PyPI packages.", file=sys.stderr)
-            sys.exit(2)
+        if spec.startswith('@'):
+            # Scoped: @scope/name@version — split on the *last* @
+            rest = spec[1:]
+            if '@' in rest:
+                idx = rest.rindex('@')
+                return '@' + rest[:idx], rest[idx + 1:] or None
+            return spec, None
+        if '@' in spec:
+            idx = spec.index('@')
+            return spec[:idx], spec[idx + 1:] or None
+        return spec, None
 
-
-def download_package(spec: str, registry: str, tmpdir: str) -> Path:
-    """Download a package archive to tmpdir. Returns path to the archive."""
-    if registry == 'npm':
-        result = subprocess.run(
-            ['npm', 'pack', spec, '--pack-destination', tmpdir, '--ignore-scripts'],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode != 0:
-            print(f"Error: Package \"{spec}\" not found in npm.\n{result.stderr}", file=sys.stderr)
-            sys.exit(2)
-        tgz_name = result.stdout.strip().split('\n')[-1]
-        return Path(tmpdir) / tgz_name
-
-    else:  # pypi
-        pip_cmd = 'pip3' if shutil.which('pip3') else 'pip'
-        # Try wheel first — wheels are pre-built and do NOT execute setup.py,
-        # so they are safe to download for scanning.  Source distributions may
-        # run arbitrary code via setup.py during the build step, defeating the
-        # purpose of "scan before install".
-        result = subprocess.run(
-            [pip_cmd, 'download', '--no-deps', '--only-binary', ':all:', '-d', tmpdir, spec],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode != 0:
-            # Fall back to source distribution (may execute setup.py)
+    # PyPI
+    for op in ('>=', '<=', '~=', '!='):
+        if op in spec:
+            base = spec.split(op)[0].strip()
             print(
-                "Warning: No wheel available — falling back to source distribution. "
-                "This may execute package build scripts (setup.py).",
+                f'Error: --vet requires an exact version (e.g., {base}==X.Y.Z). '
+                f'Version ranges are not supported with direct registry fetching.',
                 file=sys.stderr,
             )
-            result = subprocess.run(
-                [pip_cmd, 'download', '--no-deps', '--no-binary', ':all:', '-d', tmpdir, spec],
-                capture_output=True, text=True, timeout=120,
-            )
-            if result.returncode != 0:
-                print(
-                    f"Error: Package \"{spec}\" not found in PyPI.\n{result.stderr}",
-                    file=sys.stderr,
-                )
-                sys.exit(2)
-
-        # Find the downloaded file
-        files = list(Path(tmpdir).iterdir())
-        if not files:
-            print(f"Error: Failed to download \"{spec}\".", file=sys.stderr)
             sys.exit(2)
-        return files[0]
+    if '==' in spec:
+        name, version = spec.split('==', 1)
+        return name.strip(), version.strip()
+    return spec.strip(), None
 
+
+def _fetch_json(url: str) -> dict[str, object]:
+    """Fetch and parse JSON from *url*. Returns ``{}`` on 404."""
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            data: dict[str, object] = json.loads(resp.read())
+            return data
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {}
+        raise
+
+
+def _download_file(url: str, dest: Path) -> None:
+    """Stream a URL to a local file."""
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310
+        dest.write_bytes(resp.read())
+
+
+# ---------------------------------------------------------------------------
+# npm
+# ---------------------------------------------------------------------------
+
+def _download_npm(name: str, version: str | None, tmpdir: str) -> Path:
+    """Fetch an npm tarball directly from the public registry."""
+    encoded = urllib.parse.quote(name, safe='@')
+    tag = version if version else 'latest'
+    url = f"{_NPM_REGISTRY}/{encoded}/{tag}"
+
+    try:
+        meta = _fetch_json(url)
+    except (urllib.error.URLError, OSError) as e:
+        print(f"Error: Failed to fetch npm registry metadata: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    if not meta:
+        label = f"{name}@{version}" if version else name
+        print(f'Error: Package "{label}" not found in npm registry.', file=sys.stderr)
+        sys.exit(2)
+
+    dist = meta.get("dist")
+    tarball_url = dist.get("tarball") if isinstance(dist, dict) else None
+    if not tarball_url or not isinstance(tarball_url, str):
+        print(f'Error: No tarball URL found for "{name}".', file=sys.stderr)
+        sys.exit(2)
+
+    filename: str = tarball_url.rsplit('/', 1)[-1]
+    dest: Path = Path(tmpdir) / filename
+
+    try:
+        _download_file(tarball_url, dest)
+    except (urllib.error.URLError, OSError) as e:
+        print(f"Error: Failed to download npm package: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    return dest
+
+
+# ---------------------------------------------------------------------------
+# PyPI
+# ---------------------------------------------------------------------------
+
+def _download_pypi(name: str, version: str | None, tmpdir: str) -> Path:
+    """Fetch a PyPI package directly from the public registry.
+
+    Prefers wheels (no code execution) over sdists.
+    """
+    encoded = urllib.parse.quote(name, safe='')
+    if version:
+        url = f"{_PYPI_REGISTRY}/pypi/{encoded}/{version}/json"
+    else:
+        url = f"{_PYPI_REGISTRY}/pypi/{encoded}/json"
+
+    try:
+        meta = _fetch_json(url)
+    except (urllib.error.URLError, OSError) as e:
+        print(f"Error: Failed to fetch PyPI metadata: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    if not meta:
+        label = f"{name}=={version}" if version else name
+        print(f'Error: Package "{label}" not found on PyPI.', file=sys.stderr)
+        sys.exit(2)
+
+    urls = meta.get("urls")
+    if not isinstance(urls, list) or not urls:
+        print(f'Error: No downloads available for "{name}".', file=sys.stderr)
+        sys.exit(2)
+
+    def _is_type(u: object, t: str) -> bool:
+        return isinstance(u, dict) and u.get("packagetype") == t
+
+    wheel = next((u for u in urls if _is_type(u, "bdist_wheel")), None)
+    sdist = next((u for u in urls if _is_type(u, "sdist")), None)
+    chosen = wheel or sdist
+    if not isinstance(chosen, dict):
+        print(f'Error: No suitable download found for "{name}".', file=sys.stderr)
+        sys.exit(2)
+
+    download_url = chosen.get("url")
+    filename = chosen.get("filename")
+    if not isinstance(download_url, str) or not isinstance(filename, str):
+        print(f'Error: Malformed download metadata for "{name}".', file=sys.stderr)
+        sys.exit(2)
+
+    dest = Path(tmpdir) / filename
+    try:
+        _download_file(download_url, dest)
+    except (urllib.error.URLError, OSError) as e:
+        print(f"Error: Failed to download PyPI package: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    return dest
+
+
+# ---------------------------------------------------------------------------
+# Public download entry point
+# ---------------------------------------------------------------------------
+
+def download_package(spec: str, registry: str, tmpdir: str) -> Path:
+    """Download a package archive to *tmpdir* via registry API.
+
+    Returns the path to the downloaded archive file.
+    """
+    name, version = _parse_spec(spec, registry)
+
+    if registry == 'npm':
+        return _download_npm(name, version, tmpdir)
+    return _download_pypi(name, version, tmpdir)
+
+
+# ---------------------------------------------------------------------------
+# Archive extraction (unchanged)
+# ---------------------------------------------------------------------------
 
 def extract_package(archive_path: Path, tmpdir: str) -> Path:
     """Extract a package archive safely. Guards against path traversal,
@@ -213,6 +343,10 @@ def _validate_archive_member(member_name: str, resolved_root: Path, extract_dir:
         )
 
 
+# ---------------------------------------------------------------------------
+# Top-level vet entry point
+# ---------------------------------------------------------------------------
+
 def vet_package(
     spec: str,
     registry_override: str | None,
@@ -231,7 +365,8 @@ def vet_package(
         )
         return 2
 
-    check_tool_available(registry)
+    # Warn about public-only registry support
+    print(_PRIVATE_REGISTRY_WARNING, file=sys.stderr)
 
     with tempfile.TemporaryDirectory(prefix='heckler-vet-') as tmpdir:
         archive = download_package(spec, registry, tmpdir)

@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import io
+import json
 import tarfile
 import unittest.mock
+import urllib.error
 import zipfile
 from pathlib import Path
 
 import pytest
 
 from heckler.vet import (
+    _download_npm,
+    _download_pypi,
+    _parse_spec,
     _safe_tar_extract,
     _safe_zip_extract,
     _UnsafeArchiveError,
     _validate_archive_member,
     detect_registry,
-    download_package,
     extract_package,
 )
 
@@ -39,6 +43,34 @@ class TestDetectRegistry:
 
     def test_unknown_bare_name(self) -> None:
         assert detect_registry("lodash") == "unknown"
+
+
+class TestParseSpec:
+    def test_npm_unscoped_with_version(self) -> None:
+        assert _parse_spec("express@4.18.0", "npm") == ("express", "4.18.0")
+
+    def test_npm_unscoped_no_version(self) -> None:
+        assert _parse_spec("express", "npm") == ("express", None)
+
+    def test_npm_scoped_with_version(self) -> None:
+        assert _parse_spec("@babel/core@7.24.0", "npm") == ("@babel/core", "7.24.0")
+
+    def test_npm_scoped_no_version(self) -> None:
+        assert _parse_spec("@babel/core", "npm") == ("@babel/core", None)
+
+    def test_pypi_exact(self) -> None:
+        assert _parse_spec("requests==2.31.0", "pypi") == ("requests", "2.31.0")
+
+    def test_pypi_bare_name(self) -> None:
+        assert _parse_spec("requests", "pypi") == ("requests", None)
+
+    def test_pypi_rejects_gte(self) -> None:
+        with pytest.raises(SystemExit):
+            _parse_spec("django>=4.2", "pypi")
+
+    def test_pypi_rejects_compatible(self) -> None:
+        with pytest.raises(SystemExit):
+            _parse_spec("flask~=3.0", "pypi")
 
 
 class TestValidateArchiveMember:
@@ -123,37 +155,119 @@ class TestSafeTarExtract:
             _safe_tar_extract(tar_path, extract_dir, extract_dir.resolve())
 
 
-class TestDownloadPackageOrder:
-    """Verify pip download tries wheels before source distributions."""
+class TestDownloadNpm:
+    """Verify npm registry API download logic with mocked urllib."""
 
-    def test_pypi_prefers_wheel_and_warns_on_source_fallback(
-        self, tmp_path: Path, capsys: object,
-    ) -> None:
-        """First pip call must use --only-binary (safe). When that fails,
-        fall back to --no-binary and emit a setup.py warning."""
-        fake_sdist = tmp_path / "pkg-1.0.tar.gz"
-        fake_sdist.write_bytes(b"")
+    def test_downloads_tarball_from_registry(self, tmp_path: Path) -> None:
+        registry_meta = {
+            "name": "express",
+            "version": "4.18.0",
+            "dist": {
+                "tarball": "https://registry.npmjs.org/express/-/express-4.18.0.tgz",
+            },
+        }
+        tarball_bytes = b"fake-tarball-content"
 
-        def mock_run(cmd, **kwargs):
-            result = unittest.mock.MagicMock()
-            if "--only-binary" in cmd:
-                result.returncode = 1
-                result.stderr = "no wheel"
-            elif "--no-binary" in cmd:
-                result.returncode = 0
+        def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
+            url = req.full_url if hasattr(req, 'full_url') else req
+            resp = unittest.mock.MagicMock()
+            if "express/4.18.0" in url:
+                resp.read.return_value = json.dumps(registry_meta).encode()
             else:
-                result.returncode = 1
-            return result
+                resp.read.return_value = tarball_bytes
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = unittest.mock.MagicMock(return_value=False)
+            return resp
 
-        with unittest.mock.patch("heckler.vet.subprocess.run", side_effect=mock_run) as m:
-            download_package("pkg==1.0", "pypi", str(tmp_path))
-            # First attempt must be the safe wheel-only path
-            assert "--only-binary" in m.call_args_list[0][0][0]
-            # Second attempt is the source fallback
-            assert "--no-binary" in m.call_args_list[1][0][0]
-            # Warning about setup.py must appear
-            captured = capsys.readouterr()  # type: ignore[attr-defined]
-            assert "setup.py" in captured.err
+        with unittest.mock.patch("heckler.vet.urllib.request.urlopen", side_effect=fake_urlopen):
+            result = _download_npm("express", "4.18.0", str(tmp_path))
+
+        assert result.name == "express-4.18.0.tgz"
+        assert result.read_bytes() == tarball_bytes
+
+    def test_404_exits(self, tmp_path: Path) -> None:
+        def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
+            raise urllib.error.HTTPError(
+                url="", code=404, msg="Not Found", hdrs=None, fp=None,  # type: ignore[arg-type]
+            )
+
+        with (
+            unittest.mock.patch("heckler.vet.urllib.request.urlopen", side_effect=fake_urlopen),
+            pytest.raises(SystemExit),
+        ):
+            _download_npm("nonexistent-pkg", "1.0.0", str(tmp_path))
+
+
+class TestDownloadPyPI:
+    """Verify PyPI registry API download logic with mocked urllib."""
+
+    def test_prefers_wheel_over_sdist(self, tmp_path: Path) -> None:
+        registry_meta = {
+            "urls": [
+                {
+                    "packagetype": "sdist",
+                    "url": "https://files.pythonhosted.org/pkg-1.0.tar.gz",
+                    "filename": "pkg-1.0.tar.gz",
+                },
+                {
+                    "packagetype": "bdist_wheel",
+                    "url": "https://files.pythonhosted.org/pkg-1.0-py3-none-any.whl",
+                    "filename": "pkg-1.0-py3-none-any.whl",
+                },
+            ],
+        }
+        wheel_bytes = b"fake-wheel-content"
+        downloaded_url = None
+
+        def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal downloaded_url
+            url = req.full_url if hasattr(req, 'full_url') else req
+            resp = unittest.mock.MagicMock()
+            if "pypi.org" in url:
+                resp.read.return_value = json.dumps(registry_meta).encode()
+            else:
+                downloaded_url = url
+                resp.read.return_value = wheel_bytes
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = unittest.mock.MagicMock(return_value=False)
+            return resp
+
+        with unittest.mock.patch("heckler.vet.urllib.request.urlopen", side_effect=fake_urlopen):
+            result = _download_pypi("pkg", "1.0", str(tmp_path))
+
+        assert result.name == "pkg-1.0-py3-none-any.whl"
+        assert result.read_bytes() == wheel_bytes
+        assert downloaded_url is not None
+        assert "whl" in downloaded_url
+
+    def test_falls_back_to_sdist(self, tmp_path: Path) -> None:
+        registry_meta = {
+            "urls": [
+                {
+                    "packagetype": "sdist",
+                    "url": "https://files.pythonhosted.org/pkg-1.0.tar.gz",
+                    "filename": "pkg-1.0.tar.gz",
+                },
+            ],
+        }
+        sdist_bytes = b"fake-sdist-content"
+
+        def fake_urlopen(req, **kwargs):  # type: ignore[no-untyped-def]
+            url = req.full_url if hasattr(req, 'full_url') else req
+            resp = unittest.mock.MagicMock()
+            if "pypi.org" in url:
+                resp.read.return_value = json.dumps(registry_meta).encode()
+            else:
+                resp.read.return_value = sdist_bytes
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = unittest.mock.MagicMock(return_value=False)
+            return resp
+
+        with unittest.mock.patch("heckler.vet.urllib.request.urlopen", side_effect=fake_urlopen):
+            result = _download_pypi("pkg", "1.0", str(tmp_path))
+
+        assert result.name == "pkg-1.0.tar.gz"
+        assert result.read_bytes() == sdist_bytes
 
 
 class TestVetEndToEnd:
