@@ -99,10 +99,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # Load config
-    config = load_config(
-        config_path=args.config,
-        scan_deps=args.scan_deps,
-    )
+    try:
+        config = load_config(
+            config_path=args.config,
+            scan_deps=args.scan_deps,
+        )
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
 
     # CLI overrides
     if args.severity:

@@ -40,7 +40,10 @@ def load_config(
         p = Path(config_path)
         if p.exists():
             raw = _load_yaml_file(p)
-        # Explicit path that doesn't exist is silently ignored
+        else:
+            raise FileNotFoundError(
+                f"Config file not found: {config_path}"
+            )
     else:
         # Auto-discover
         for candidate in ('.heckler.yml', '.heckler.yaml'):

@@ -57,6 +57,7 @@ class TestLoadConfig:
         config = load_config(scan_deps=True)
         assert config.scan_deps is True
 
-    def test_missing_config_uses_defaults(self) -> None:
-        config = load_config(config_path="/nonexistent/.heckler.yml")
-        assert config.severity_threshold == Severity.LOW
+    def test_missing_config_raises_error(self) -> None:
+        import pytest
+        with pytest.raises(FileNotFoundError, match="Config file not found"):
+            load_config(config_path="/nonexistent/.heckler.yml")

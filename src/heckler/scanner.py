@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,6 +63,12 @@ DEFAULT_TEXT_EXTENSIONS = frozenset({
     '.zsh', '.yaml', '.yml', '.json', '.toml', '.xml', '.html', '.css', '.scss',
     '.sql', '.swift', '.kt', '.scala', '.lua', '.pl', '.r', '.md', '.txt',
     '.cfg', '.ini', '.dockerfile', '.tf', '.hcl', '.vue', '.svelte',
+    # Additional extensions to prevent evasion via uncommon file types
+    '.ps1', '.bat', '.cmd', '.fish',             # Shells
+    '.ejs', '.hbs', '.njk', '.pug', '.jinja',    # Templates
+    '.gradle', '.rake', '.cmake', '.mk',         # Build systems
+    '.graphql', '.gql', '.proto',                 # Schema/IDL
+    '.env.example', '.conf', '.properties',       # Config
 })
 
 DEFAULT_SKIP_DIRS = frozenset({
@@ -77,6 +84,13 @@ DEP_SCAN_EXTENSIONS = frozenset({
 })
 
 IGNORE_COMMENT = "heckler-ignore"
+
+# Pattern requires heckler-ignore to appear after a comment token.
+# Matches: // heckler-ignore, # heckler-ignore, /* heckler-ignore */,
+#          -- heckler-ignore, ; heckler-ignore
+_IGNORE_PATTERN = re.compile(
+    r'(?://|#|/\*|--|;)\s*heckler-ignore'
+)
 
 _BINARY_CHECK_SIZE = 8192
 
@@ -96,8 +110,11 @@ class Scanner:
         findings: list[Finding] = []
         source, package = self._classify_path(filename)
 
-        for line_num, line in enumerate(text.splitlines(), 1):
-            if IGNORE_COMMENT in line:
+        # Use split('\n') instead of splitlines() — splitlines() treats
+        # U+2028/U+2029 as line terminators, consuming them before the regex
+        # can detect them.
+        for line_num, line in enumerate(text.split('\n'), 1):
+            if _IGNORE_PATTERN.search(line):
                 continue
             for match in DANGEROUS_UNICODE_RE.finditer(line):
                 cp = ord(match.group()[0])
@@ -120,11 +137,23 @@ class Scanner:
 
     def scan_file(self, filepath: Path) -> list[Finding]:
         """Read a file and scan its contents."""
-        if self._is_binary(filepath):
-            return []
         try:
-            text = filepath.read_text(encoding='utf-8', errors='replace')
+            raw = filepath.read_bytes()
         except (OSError, PermissionError):
+            return []
+
+        # Check for null bytes — scan text before the first null instead
+        # of skipping the entire file (prevents null-byte injection bypass)
+        null_pos = raw.find(b'\x00')
+        if null_pos != -1:
+            if null_pos == 0:
+                return []  # Truly binary (starts with null)
+            # Scan the portion before the null byte
+            raw = raw[:null_pos]
+
+        try:
+            text = raw.decode('utf-8', errors='replace')
+        except Exception:
             return []
         return self.scan_text(text, str(filepath))
 

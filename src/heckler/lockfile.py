@@ -62,6 +62,14 @@ def parse_changed_packages(diff_text: str, ecosystem: str) -> list[tuple[str, st
         return _parse_yarn_diff(diff_text)
     elif ecosystem == 'pnpm':
         return _parse_pnpm_diff(diff_text)
+    elif ecosystem in ('cargo', 'go', 'ruby', 'composer'):
+        import sys as _sys
+        print(
+            f"Warning: {ecosystem} lockfile parsing is not yet supported. "
+            f"Changed packages will not be scanned with --diff-only.",
+            file=_sys.stderr,
+        )
+        return []
     return []
 
 

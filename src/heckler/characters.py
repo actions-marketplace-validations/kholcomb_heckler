@@ -159,6 +159,8 @@ CHAR_DB: dict[int, CharInfo] = {
     0x2008: CharInfo("Punctuation Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
     0x2009: CharInfo("Thin Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
     0x200A: CharInfo("Hair Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
+    0x2028: CharInfo("Line Separator", ThreatCategory.BIDI_CONTROL, Severity.HIGH),
+    0x2029: CharInfo("Paragraph Separator", ThreatCategory.BIDI_CONTROL, Severity.HIGH),
     0x202F: CharInfo("Narrow No-Break Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
     0x205F: CharInfo("Medium Mathematical Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
     0x3000: CharInfo("Ideographic Space", ThreatCategory.INVISIBLE_FORMAT, Severity.LOW),
@@ -176,7 +178,7 @@ DANGEROUS_UNICODE_RE = re.compile(
     r'\u17B4-\u17B5'    # Khmer Vowel Inherent
     r'\u180B-\u180E'    # Mongolian Free Variation Selectors + Vowel Separator
     r'\u2000-\u200F'    # Typographic spaces + ZWSP/ZWNJ/ZWJ/LRM/RLM
-    r'\u202A-\u202F'    # Bidi embeddings/overrides + Narrow No-Break Space
+    r'\u2028-\u202F'    # Line/Paragraph separators + Bidi embeddings/overrides + Narrow No-Break Space
     r'\u205F'           # Medium Mathematical Space
     r'\u2060-\u206F'    # Word Joiner, invisible operators, bidi isolates, deprecated format chars
     r'\u2800'           # Braille Pattern Blank

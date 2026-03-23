@@ -185,8 +185,9 @@ def _safe_zip_extract(archive_path: Path, extract_dir: Path, resolved_root: Path
                     f"Archive contains symlink: {info.filename}"
                 )
 
-        # All entries validated — extract
-        zf.extractall(extract_dir)
+        # All entries validated — extract individually (avoid unfiltered extractall)
+        for info in zf.infolist():
+            zf.extract(info, extract_dir)
 
 
 def _validate_archive_member(member_name: str, resolved_root: Path, extract_dir: Path) -> None:
